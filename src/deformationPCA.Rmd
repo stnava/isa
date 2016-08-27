@@ -11,7 +11,10 @@ system in which the deformations are defined. This data is computed in the examp
 
 ```{r spcaexample1}
 library( ANTsR )
-bd=path.expand( "~/data/antsExamples/TemplateBuildingExample/Faces/" )
+# should set this directory manually!
+bd=path.expand( "~/data/antsExamples/TemplateBuildingExampleA/Faces/" )
+if ( ! dir.exists( bd ) )
+  stop("set base directory to point to template face example output.")
 defs = Sys.glob( paste(bd,'TemplateFaces/*[0-9]Warp.nii.gz',sep='') )
 template = antsImageRead( paste(bd,'TemplateFaces/T_template0.nii.gz',sep='') )
 msk = getMask( template ) %>% iMath( "MD", 8 )
@@ -36,7 +39,6 @@ Show the shape change and its magnitude / locality.
 
 ```{r viewer}
 mxk=ncol( dpca$pca$v )
-mxk=2
 for ( ww in 1:mxk )
   {
   print( ww )
