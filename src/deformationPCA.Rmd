@@ -1,0 +1,76 @@
+---
+title: "Voxel-based analysis relationships between volume and CDR-SoB"
+author: "B. Avants, P. Chiao"
+date: "February 24, 2016"
+output: html_document
+---
+
+Load the deformation field dataset and the template that defines the coordinate
+system in which the deformations are defined. This data is computed in the example:
+[ANTs template building example](https://github.com/ntustison/TemplateBuildingExample).
+
+```{r spcaexample1}
+library( ANTsR )
+setwd( path.expand( "~/data/antsExamples/TemplateBuildingExample/Faces" ) )
+defs = Sys.glob( 'TemplateFaces/*[0-9]Warp.nii.gz' )
+template = antsImageRead( "TemplateFaces/T_template0.nii.gz" )
+msk = getMask( template ) %>% iMath( "MD", 8 )
+# msk = antsImageRead( "eye.nii.gz" )
+wlist = list( )
+for ( i in 1:length( defs ) ) wlist[[ i ]] = antsImageRead( defs[i] )
+```
+
+Compute the PCA basis.
+
+```{r computer}
+if ( !exists("dpca") )
+####
+  dpca = multichannelPCA( wlist, msk, pcaOption='randPCA', verbose=FALSE )
+# if ( !exists("dpca") )
+#  dpca = multichannelPCA( wlist, msk, k=50, pcaOption=2500, verbose=TRUE )
+# dpca = multichannelPCA( wlist, msk, k=8, pcaOption='fastICA', verbose=TRUE )
+####
+```
+
+Show the shape change and its magnitude / locality.
+
+```{r viewer}
+for ( ww in 1:ncol( dpca$pca$v ) )
+  {
+  print( ww )
+  myw = dpca$pcaWarps[[ww]] * 0.5 / max( abs( dpca$pcaWarps[[ww]]  ) ) * (-1)
+  warpTx = antsrTransformFromDisplacementField(  myw  )
+  # compose several times to get a visual effect
+  wtxlong = list( ) ; for ( i in 1:5 ) wtxlong[[i]]=warpTx
+  warped = applyAntsrTransform( wtxlong, data = template,
+    reference = template )
+  for ( kk in 1:1 ) {
+    plot( template )
+    plot( warped )
+    }
+  # look at the magnitude ...
+  splt = splitChannels( dpca$pcaWarps[[ww]]  )
+  mgntd = iMath( abs( splt[[1]] ) + abs( splt[[1]] ), "Normalize" )
+  plot( template, mgntd, window.overlay=c(0.2,1) )
+  Sys.sleep( 2 )
+  }
+```
+
+Create a random face.
+
+```{r randspcaresult}
+# now make a "random" face
+combvec = dpca$pcaWarps[[1]]
+for ( i in 2:20 )
+  combvec = combvec + dpca$pcaWarps[[i]] * rnorm(1, sd=5)
+combvec = combvec * 0.25 / max( abs( combvec  ) )
+warpTx = antsrTransformFromDisplacementField( combvec  )
+# compose several times to get a visual effect
+wtxlong = list( ) ; for ( i in 1:5 ) wtxlong[[i]]=warpTx
+warped = applyAntsrTransform( wtxlong, data = template,
+  reference = template )
+for ( kk in 1:6 ) {
+  plot( template )
+  plot( warped )
+  }
+```
