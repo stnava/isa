@@ -11,9 +11,9 @@ system in which the deformations are defined. This data is computed in the examp
 
 ```{r spcaexample1}
 library( ANTsR )
-setwd( path.expand( "~/data/antsExamples/TemplateBuildingExample/Faces" ) )
-defs = Sys.glob( 'TemplateFaces/*[0-9]Warp.nii.gz' )
-template = antsImageRead( "TemplateFaces/T_template0.nii.gz" )
+bd=path.expand( "~/data/antsExamples/TemplateBuildingExample/Faces/" )
+defs = Sys.glob( paste(bd,'TemplateFaces/*[0-9]Warp.nii.gz',sep='') )
+template = antsImageRead( paste(bd,'TemplateFaces/T_template0.nii.gz',sep='') )
 msk = getMask( template ) %>% iMath( "MD", 8 )
 # msk = antsImageRead( "eye.nii.gz" )
 wlist = list( )
@@ -35,7 +35,9 @@ if ( !exists("dpca") )
 Show the shape change and its magnitude / locality.
 
 ```{r viewer}
-for ( ww in 1:ncol( dpca$pca$v ) )
+mxk=ncol( dpca$pca$v )
+mxk=2
+for ( ww in 1:mxk )
   {
   print( ww )
   myw = dpca$pcaWarps[[ww]] * 0.5 / max( abs( dpca$pcaWarps[[ww]]  ) ) * (-1)
@@ -52,7 +54,6 @@ for ( ww in 1:ncol( dpca$pca$v ) )
   splt = splitChannels( dpca$pcaWarps[[ww]]  )
   mgntd = iMath( abs( splt[[1]] ) + abs( splt[[1]] ), "Normalize" )
   plot( template, mgntd, window.overlay=c(0.2,1) )
-  Sys.sleep( 2 )
   }
 ```
 
@@ -61,7 +62,7 @@ Create a random face.
 ```{r randspcaresult}
 # now make a "random" face
 combvec = dpca$pcaWarps[[1]]
-for ( i in 2:20 )
+for ( i in 2:mxk )
   combvec = combvec + dpca$pcaWarps[[i]] * rnorm(1, sd=5)
 combvec = combvec * 0.25 / max( abs( combvec  ) )
 warpTx = antsrTransformFromDisplacementField( combvec  )
