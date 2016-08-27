@@ -12,7 +12,7 @@ system in which the deformations are defined. This data is computed in the examp
 ```{r spcaexample1}
 library( ANTsR )
 # should set this directory manually!
-bd=path.expand( "~/data/antsExamples/TemplateBuildingExampleA/Faces/" )
+bd=path.expand( "~/data/antsExamples/TemplateBuildingExample/Faces/" )
 if ( ! dir.exists( bd ) )
   stop("set base directory to point to template face example output.")
 defs = Sys.glob( paste(bd,'TemplateFaces/*[0-9]Warp.nii.gz',sep='') )
@@ -39,6 +39,7 @@ Show the shape change and its magnitude / locality.
 
 ```{r viewer}
 mxk=ncol( dpca$pca$v )
+mxk=4
 for ( ww in 1:mxk )
   {
   print( ww )
@@ -54,7 +55,7 @@ for ( ww in 1:mxk )
     }
   # look at the magnitude ...
   splt = splitChannels( dpca$pcaWarps[[ww]]  )
-  mgntd = iMath( abs( splt[[1]] ) + abs( splt[[1]] ), "Normalize" )
+  mgntd = iMath( abs( splt[[1]] ) + abs( splt[[2]] ), "Normalize" )
   plot( template, mgntd, window.overlay=c(0.2,1) )
   }
 ```
@@ -72,7 +73,7 @@ warpTx = antsrTransformFromDisplacementField( combvec  )
 wtxlong = list( ) ; for ( i in 1:5 ) wtxlong[[i]]=warpTx
 warped = applyAntsrTransform( wtxlong, data = template,
   reference = template )
-for ( kk in 1:6 ) {
+for ( kk in 1:1 ) {
   plot( template )
   plot( warped )
   }
