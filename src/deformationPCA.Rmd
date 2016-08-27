@@ -1,7 +1,7 @@
 ---
 title: "Voxel-based analysis relationships between volume and CDR-SoB"
-author: "B. Avants, P. Chiao"
-date: "February 24, 2016"
+author: "B. Avants, JT Duda"
+date: "`r Sys.Date()`"
 output: html_document
 ---
 
