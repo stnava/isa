@@ -1,9 +1,17 @@
 ---
-title: "Diffeomorphic procrustes analysis of images"
-author: "B. Avants, JT Duda, NJ Tustison"
+title: "Procrustes analysis via diffeomorphic image matching"
+author: "BB Avants, JT Duda, NJ Tustison"
 date: "`r Sys.Date()`"
 output: html_document
 ---
+
+# Introduction
+
+The singular value decomposition (and its close relative, principal component analysis) is perhaps the most widely used dimensionality reduction method in statistics and machine learning.  Both efficient implementations and mature approaches to visualization make the method accessible and interpretable in a broad range of applications.  However, several limitations exist.  Primarily, the basis produced by SVD is severely limited by the number of samples.  Relatedly, the basis is not sparse in the feature space.  Both of these concerns may be addressed by methods such as sparse PCA, ICA or NMF.  However, these methods introduce additional assumptions that may not be easy to check (e.g. FIXME), additional parameters that may not be intuitive to select (e.g. weights for sparseness penalties) and the algorithms may not be implemented efficiently enough to be effective in datasets that may be large in $n$ and/or $p$.
+
+# Methods
+
+# Procedure 
 
 Load the deformation field dataset and the template that defines the coordinate
 system in which the deformations are defined. This data is computed in the example:
@@ -15,9 +23,17 @@ library( ANTsR )
 bd=path.expand( "~/data/antsExamples/TemplateBuildingExample/Faces/" )
 if ( ! dir.exists( bd ) )
   stop("set base directory to point to template face example output.")
-defs = Sys.glob( paste(bd,'TemplateFaces/*[0-9]Warp.nii.gz',sep='') )
+defs = Sys.glob( paste(bd,'TemplateFaces/T_face*[0-9]Warp.nii.gz',sep='') )
+defsi = Sys.glob( paste(bd,'TemplateFaces/T_face*[0-9]InverseWarp.nii.gz',sep='') )
+affs = Sys.glob( paste(bd,'TemplateFaces/T_face*GenericAffine.mat',sep='') )
+faces = Sys.glob( paste(bd,'fa*.nii.gz',sep='') )
+imgs = Sys.glob( paste(bd,'TemplateFaces/T_template0face*WarpedToTemplate.nii.gz',sep='') )
 template = antsImageRead( paste(bd,'TemplateFaces/T_template0.nii.gz',sep='') )
 msk = getMask( template ) %>% iMath( "MD", 8 )
+jlist = list() 
+for ( k in 1:length( defs ) )
+  jlist[[ k ]] = createJacobianDeterminantImage( template, defs[[ k ]] )
+imat = imageListToMatrix( jlist, msk )
 # msk = antsImageRead( "eye.nii.gz" )
 wlist = list( )
 for ( i in 1:length( defs ) ) wlist[[ i ]] = antsImageRead( defs[i] )
@@ -28,10 +44,10 @@ Compute the PCA basis.
 ```{r computer}
 if ( !exists("dpca") )
 ####
-  dpca = multichannelPCA( wlist, msk, pcaOption='randPCA', verbose=FALSE )
-# if ( !exists("dpca") )
-#  dpca = multichannelPCA( wlist, msk, k=50, pcaOption=2500, verbose=TRUE )
-# dpca = multichannelPCA( wlist, msk, k=8, pcaOption='fastICA', verbose=TRUE )
+#  dpca = multichannelPCA( wlist, msk, pcaOption='randPCA', verbose=FALSE )
+# dpca = multichannelPCA( wlist, msk, k=10, pcaOption='eanat', verbose=TRUE )
+# dpca = multichannelPCA( wlist, msk, k=50, pcaOption=2000, verbose=FALSE, auxiliaryModality = imat )
+ dpca = multichannelPCA( wlist, msk, k=8, pcaOption='fastICA', verbose=TRUE )
 ####
 ```
 
@@ -39,14 +55,14 @@ Show the shape change and its magnitude / locality.
 
 ```{r viewer}
 mxk=ncol( dpca$pca$v )
-mxk=4
 for ( ww in 1:mxk )
   {
   print( ww )
-  myw = dpca$pcaWarps[[ww]] * 0.5 / max( abs( dpca$pcaWarps[[ww]]  ) ) * (-1)
+  myw = dpca$pcaWarps[[ww]] * 0.25 / max( abs( dpca$pcaWarps[[ww]]  ) )
+  myw = smoothImage( myw, antsGetSpacing( template ) * 5.0 )
   warpTx = antsrTransformFromDisplacementField(  myw  )
   # compose several times to get a visual effect
-  wtxlong = list( ) ; for ( i in 1:5 ) wtxlong[[i]]=warpTx
+  wtxlong = list( ) ; for ( i in 1:20 ) wtxlong[[i]]=warpTx
   warped = applyAntsrTransform( wtxlong, data = template,
     reference = template )
   for ( kk in 1:1 ) {
@@ -56,7 +72,7 @@ for ( ww in 1:mxk )
   # look at the magnitude ...
   splt = splitChannels( dpca$pcaWarps[[ww]]  )
   mgntd = iMath( abs( splt[[1]] ) + abs( splt[[2]] ), "Normalize" )
-  plot( template, mgntd, window.overlay=c(0.2,1) )
+  plot( template, mgntd, window.overlay=c(0.1,1) )
   }
 ```
 
@@ -70,11 +86,92 @@ for ( i in 2:mxk )
 combvec = combvec * 0.25 / max( abs( combvec  ) )
 warpTx = antsrTransformFromDisplacementField( combvec  )
 # compose several times to get a visual effect
-wtxlong = list( ) ; for ( i in 1:5 ) wtxlong[[i]]=warpTx
+wtxlong = list( ) ; for ( i in 1:12 ) wtxlong[[i]]=warpTx
 warped = applyAntsrTransform( wtxlong, data = template,
   reference = template )
 for ( kk in 1:1 ) {
   plot( template )
   plot( warped )
   }
+```
+
+
+
+The previous examples show how we can use an unbiased decomposition 
+of the data in order to understand shape variation.  However, this 
+full decomposition may obscure details that we may be able to see if
+we focus on specific landmarks, as in traditional geometric morphometry [ref].
+
+
+```{r geomorph0}
+library( ANTsR )
+library( geomorph )
+# read the landmarks
+template = antsImageRead( path.expand( "~/data/antsExamples/isa/data/template.nii.gz" ) )
+lm = antsImageRead( path.expand( "~/data/antsExamples/isa/data/landmarks.nii.gz" ) )
+plot( template, lm )
+mydim = lm@dimension
+```
+
+
+Map all of these landmarks to the subject space to treat them as landmarks.
+
+```{r geomorph}
+lmCents = getCentroids( lm, clustparam = 3 )[,1:mydim]
+plot( lmCents[,1], lmCents[,2]*-1, main='template and subject points')
+pointmat = matrix( nrow = length( defs ), ncol = length( lmCents ) )
+mycolors = palette( rainbow( length( defs ) ) )
+for ( k in 1:length( defs ) )
+  {
+  loctx = c( defs[k], affs[k] )
+  loctxi = c( affs[k], defsi[k] )
+  facek = antsImageRead( faces[ k ] )
+  lmWarpImage = antsApplyTransforms( facek, lm, transformlist=loctxi, 
+    interpolator = 'nearest', whichtoinvert = c(T,F) )
+  mycents = getCentroids( lmWarpImage, clustparam = 3 )[1:p,1:mydim]
+  pointmat[ k ,  ] = as.numeric( mycents - lmCents  )
+  points( mycents[,1], mycents[,2]*(-1), col=mycolors[ k ] )
+  plot( facek, lmWarpImage )
+#  Sys.sleep( 5 )
+  }
+```
+
+Run pca on the point deformation matrix.
+
+```{r mypca,eval=TRUE}
+mypca = svd( pointmat )
+plot( ts( mypca$d / sum( mypca$d ) ) )
+# convert back to a deformation
+defmat = matrix( t(mypca$v), nrow=length(defs), ncol=length( lmCents ) )
+for ( k in 1:nrow(defmat) )
+  {
+  def1 = lmCents + defmat[,k] * 4.0
+  temp = rbind( lmCents, def1 )
+  plot( temp[,1], temp[,2]*-1, main='template and Kth deformation', cex=1.5, lwd=3 )
+  points( def1[,1], def1[,2]*-1, col=mycolors[ k ], cex=1.5, lwd=3 )
+  }
+```
+
+
+```{r gpa,eval=FALSE,echo=FALSE}
+# Run generalized procrustes analysis.
+Y.gpa <- gpagen( myarr, PrinAxes = FALSE, max.iter=1  )
+temp = Y.gpa$consensus
+plot( temp[,1], temp[,2], main='template and subject points')
+```
+
+
+```{r gpaviz1,eval=FALSE,echo=FALSE}
+#GPA-alignment
+plotTangentSpace( Y.gpa$coords )
+```
+
+
+```{r gpaviz2,eval=FALSE,echo=FALSE}
+ref<-mshape( Y.gpa$coords )
+plotRefToTarget( ref, ref )
+k=5
+plotRefToTarget( ref, Y.gpa$coords[,,k])
+GP3 <- gridPar(pt.bg = "blue", pt.size = 1.5, tar.pt.bg = "orange", tar.pt.size = 1)
+plotRefToTarget(ref,Y.gpa$coords[,,k], gridPars=GP3, mag=3, method="vector")
 ```
