@@ -44,10 +44,10 @@ Compute the PCA basis.
 ```{r computer}
 if ( !exists("dpca") )
 ####
-#  dpca = multichannelPCA( wlist, msk, pcaOption='randPCA', verbose=FALSE )
+  dpca = multichannelPCA( wlist, msk, pcaOption='randPCA', verbose=FALSE )
 # dpca = multichannelPCA( wlist, msk, k=10, pcaOption='eanat', verbose=TRUE )
 # dpca = multichannelPCA( wlist, msk, k=50, pcaOption=2000, verbose=FALSE, auxiliaryModality = imat )
- dpca = multichannelPCA( wlist, msk, k=8, pcaOption='fastICA', verbose=TRUE )
+# dpca = multichannelPCA( wlist, msk, k=8, pcaOption='fastICA', verbose=TRUE )
 ####
 ```
 
@@ -121,6 +121,8 @@ lmCents = getCentroids( lm, clustparam = 3 )[,1:mydim]
 plot( lmCents[,1], lmCents[,2]*-1, main='template and subject points')
 pointmat = matrix( nrow = length( defs ), ncol = length( lmCents ) )
 mycolors = palette( rainbow( length( defs ) ) )
+p = nrow( lmCents )
+mysizes = rep( NA, p )
 for ( k in 1:length( defs ) )
   {
   loctx = c( defs[k], affs[k] )
@@ -129,7 +131,9 @@ for ( k in 1:length( defs ) )
   lmWarpImage = antsApplyTransforms( facek, lm, transformlist=loctxi, 
     interpolator = 'nearest', whichtoinvert = c(T,F) )
   mycents = getCentroids( lmWarpImage, clustparam = 3 )[1:p,1:mydim]
-  pointmat[ k ,  ] = as.numeric( mycents - lmCents  )
+  deltaPoints = mycents - lmCents
+  pointmat[ k ,  ] = as.numeric( deltaPoints  )
+  mysizes[ k ] = sum( sqrt( rowSums( deltaPoints^2 ) ) )
   points( mycents[,1], mycents[,2]*(-1), col=mycolors[ k ] )
   plot( facek, lmWarpImage )
 #  Sys.sleep( 5 )
@@ -150,6 +154,28 @@ for ( k in 1:nrow(defmat) )
   plot( temp[,1], temp[,2]*-1, main='template and Kth deformation', cex=1.5, lwd=3 )
   points( def1[,1], def1[,2]*-1, col=mycolors[ k ], cex=1.5, lwd=3 )
   }
+```
+
+
+We can regress the size measurement against each of these principal components 
+in order to undertand allometry.
+
+```{r allometry}
+# regress size data on pcs
+print( summary( lm( mypca$u ~ mysizes ) ) )
+plot( mysizes,  mypca$u[,1], main='Component 1 versus size')
+plot( mysizes,  mypca$u[,2], main='Component 2 versus size')
+plot( mysizes,  mypca$u[,4], main='Component 4 versus size')
+```
+
+Allometry based on full deformation.  Note that much of 
+the global scaling portion of the transformation is 
+contained in the affine transformation.
+
+```{r allometry2}
+# regress size data on pcs
+print( summary( lm( dpca$pca$u ~ mysizes ) ) )
+plot( mysizes,  dpca$pca$u[,1], main='Component 1 versus deformation pca')
 ```
 
 
