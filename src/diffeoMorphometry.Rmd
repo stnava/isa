@@ -1,5 +1,5 @@
 ---
-title: "Procrustes analysis via diffeomorphic image matching"
+title: "Automated landmarking and morphometry with diffeomorphic image matching"
 author: "BB Avants, JT Duda, NJ Tustison"
 date: "`r Sys.Date()`"
 output: html_document
@@ -7,27 +7,32 @@ output: html_document
 
 # Introduction
 
-Automated mapping of biological structures will improve the reliability and scope of classical approaches to morphometry.  We illustrate how this can be accomplished with recently developed methods for diffeomorphic image or shape mapping.
+Automated mapping of biological structures will improve the reliability and scope of classical approaches to morphometry.  We illustrate how this can be accomplished with recently developed methods for diffeomorphic mapping.
 
 # Methods
 
-Diffeomorphisms 
+Diffeomorphisms: differentiable maps with differentiable inverse. 
 
-Templates
+Templates: a reference shape which may be chosen arbitrarily or estimated as the image that yields the "shortest" diffeomorphism (least deformation) between itself and all images in a population.
 
-Mapping data back and forth between spaces
+Diffeomorphisms allows us to map data back and forth between spaces in particular between the template space (which may contain landmark or segmentation data) and the subject space.  Furthermore, the template stores information in a common framework and acts as a digital storage system for population information.  The template is an index, like an excel or csv file, to the image or shape-related information across a population.
 
-Automated landmarking
+We exploit diffeomorphisms in order to perform automated landmarking, as shown below.  If one is to employ this procedure, then it may be valuable to:
+* Evaluate the landmark accuracy by labeling not only the template but a subset of your cohort;
+* Study the principal components of not only the landmark positions but also the full deformation fields;
+* Look at the jacobian as well as PCA of the deformations or landmark points;
+* Consider methods such as kernel PCA instead of standard PCA in order to decompose one's data.
+In other words, this is an information rich analysis approach and all of these methods are valuable for gaining insight into one's data.
 
 # Data
 
-The [Brown 1070-Shape Database](http://vision.lems.brown.edu/sites/default/files/1070db.tar.gz) provides a simple set of images that we can process quickly and that provide an analogy to our larger scale processing.
+The [Brown 1070-Shape Database](http://vision.lems.brown.edu/sites/default/files/1070db.tar.gz) provides a simple set of images that we can process quickly and that provide an analogy to our larger scale processing.  We choose 20 `flatfish` examples, one of which will serve as the template.
 
 # Procedure 
 
-
 We define the template by selecting an individual from the flatfish database.  We landmark this image manually and perform preprocessing.  This should be done carefully as it will impact the full analysis pipeline.  Alternatively, one might leverage an "optimal" template that can be derived from input data as in the example:
-[ANTs template building example](https://github.com/ntustison/TemplateBuildingExample).
+[ANTs template building example](https://github.com/ntustison/TemplateBuildingExample).  However, 
+we do not explore this here.
 
 ```{r template}
 library( ANTsR )
@@ -41,23 +46,24 @@ template = thresholdImage( templateIn, 0, 0 )
 msk = getMask( template ) %>% iMath( "MD", 1 )
 template = cropImage( template, msk ) %>% iMath("PadImage",20)
 landmarks = cropImage( landmarks, msk ) %>% iMath("PadImage",20)
+mycolors = palette( rainbow( max(landmarks)+1 ) )
 msk = getMask( template ) %>% iMath( "MD", 1 )
-plot( template, landmarks, doCropping=FALSE )
 ```
 
-Collect the images.
+Collect the images and display them for perusal.  Note the orientation differences.
 
 ```{r icoll}
 ifns = rev( Sys.glob( paste(bd,'flatfish*.png',sep='') ) )[-1] # exclude template
 ilist = list( )
 for ( i in 1:length( ifns ) ) {
+  print(  ifns[ i ] )
   ilist[[ i ]] = thresholdImage( antsImageRead( ifns[ i ] ), 0, 0  )
   plot( ilist[[ i ]], doCropping=F )
   }
 ```
 
 
-Reorient the images with a *rigid* mapping such that they match the template.
+Reorient the images with a *rigid* mapping such that they match the template.  We use a multi-start method [ref gang song paper] to overcome local optima that may occur when using registration that employs only a gradient descent optimization.  This step can be crucial for specimens that have no consistent orientation during data collection.
 
 ```{r ireo}
 rilist = list( )
@@ -79,7 +85,10 @@ We now compute the deformable mapping.  The transformation model is the
 composition of an affine and deformable mapping, computed after the rigid 
 transformation from above.  We compute the map then merge the total map 
 into a composite deformation field such that we capture both shape and 
-size in the field.
+size in the field.  This approach is not standard in brain mapping but is 
+critical to the field of allometry where "size" is fundamental to comparison 
+across species or strains.  Size may be a core variable of interest or alternatively
+treated as a nuisance variable.
 
 ```{r ireg}
 reglist = list( )
@@ -93,17 +102,19 @@ for ( i in 1:length( ifns ) ) {
   }
 ```
 
-
 Use the jacobian to get a size estimate (also compare with the binary segmentation).
 
 ```{r mysizes}
 mysizes = rep( NA, length( ifns ) )
 mysizesJ = rep( NA, length( ifns ) )
+jlist = list( )
 for ( i in 1:length( ifns ) ) {
   mysizes[[ i ]] = sum( rilist[[ i ]] )
   jac = createJacobianDeterminantImage( msk, wlist[[ i ]] )
   mysizesJ[[ i ]] = sum( jac[ msk == 1 ] )
+  jlist[[ i ]] = jac
 }
+jmat = imageListToMatrix( jlist, msk )
 plot( mysizes, mysizesJ, main='Jacobian to binary volume comparison' )
 ```
 
@@ -112,28 +123,33 @@ Compute PCA based on the full deformation field.
 ```{r computer}
 if ( !exists("dpca") )
 ####
-  dpca = multichannelPCA( wlist, msk, pcaOption='randPCA', verbose=FALSE )
-# dpca = multichannelPCA( wlist, msk, k=10, pcaOption='eanat', verbose=TRUE )
+# this option can compute > n components
+#  dpca = multichannelPCA( wlist, msk, k=20, pcaOption=250, verbose=FALSE  ) 
+  dpca = multichannelPCA( wlist, msk, pcaOption='svd', verbose=FALSE ) # standard
+#  dpca = multichannelPCA( wlist, msk, pcaOption='randPCA', verbose=FALSE ) # big data standard
+# dpca = multichannelPCA( wlist, msk, k=10, pcaOption='eanat', verbose=FALSE )
 # dpca = multichannelPCA( wlist, msk, k=50, pcaOption=2000, verbose=FALSE, auxiliaryModality = imat )
-# dpca = multichannelPCA( wlist, msk, k=8, pcaOption='fastICA', verbose=TRUE )
+# dpca = multichannelPCA( wlist, msk, k=8, pcaOption='fastICA', verbose=FALSE )
 ####
 ```
 
 Show the shape change and its magnitude / locality.
 
 ```{r viewer}
-mxk=ncol( dpca$pca$v )
-for ( ww in 1:4 )
+mxk = ncol( dpca$pca$v )
+mxk = 4 # FIXME if you want to look at more components
+for ( ww in 1:mxk )
   {
   myw = dpca$pcaWarps[[ww]] * 0.25 / max( abs( dpca$pcaWarps[[ww]]  ) )
-  myw = smoothImage( myw, antsGetSpacing( template ) * 1.0 )
+#  myw = smoothImage( myw, antsGetSpacing( template ) * 1.0 )
   warpTx = antsrTransformFromDisplacementField(  myw  )
   # compose several times to get a visual effect
-  wtxlong = list( ) ; for ( i in 1:20 ) wtxlong[[i]]=warpTx
+  wtxlong = list( ) ; for ( i in 1:30 ) wtxlong[[i]]=warpTx
   warped = applyAntsrTransform( wtxlong, data = template,
     reference = template )
   edges = warped - iMath(warped,"ME",3)
-  plot( template, edges, window.overlay = c(0.1,1), doCropping=F )
+  plot( template, edges, window.overlay = c(0.1,1), alpha=0.75, doCropping=F, 
+        color.overlay='red' )
   }
 ```
 
@@ -177,7 +193,6 @@ lm = antsImageClone( landmarks )
 lmCents = getCentroids( lm, clustparam = 3 )[,1:mydim]
 plot( lmCents[,1], lmCents[,2]*-1, main='template and subject points')
 pointmat = matrix( nrow = length( rilist ), ncol = length( lmCents ) )
-mycolors = palette( rainbow( length( rilist ) ) )
 p = nrow( lmCents )
 for ( k in 1:length( rilist ) )
   {
@@ -198,11 +213,11 @@ mypca = svd( pointmat )
 plot( ts( mypca$d / sum( mypca$d ) ) )
 # convert back to a deformation
 defmat = matrix( t(mypca$v), nrow=min( dim(pointmat) ), ncol=length( lmCents ) )
+plot( temp[,1], temp[,2]*-1, main='template and Kth deformation', cex=1.5, lwd=3 )
 for ( k in 1:min( dim(pointmat) ) )
   {
   def1 = lmCents + defmat[,k] * 4.0
   temp = rbind( lmCents, def1 )
-  plot( temp[,1], temp[,2]*-1, main='template and Kth deformation', cex=1.5, lwd=3 )
   points( def1[,1], def1[,2]*-1, col=mycolors[ k ], cex=1.5, lwd=3 )
   }
 ```
@@ -219,15 +234,52 @@ plot( mysizes,  mypca$u[,2], main='Component 2 versus size')
 plot( mysizes,  mypca$u[,4], main='Component 3 versus size')
 ```
 
-Allometry based on full deformation.  Note that much of 
-the global scaling portion of the transformation is 
-contained in the affine transformation.
+Allometry based on alternative PCA of the full deformation field.
 
 ```{r allometry2}
 # regress size data on pcs
-print( summary( lm( dpca$pca$u[,1:4] ~ mysizes ) ) )
-plot( mysizes,  dpca$pca$u[,1], main='Deformation Component 1 versus deformation pca')
-plot( mysizes,  dpca$pca$u[,2], main='Deformation Component 2 versus size')
-plot( mysizes,  dpca$pca$u[,3], main='Deformation Component 3 versus size')
+localpcamat = matrix( nrow = length( ifns ), ncol = sum( msk )*mydim  )
+for ( i in 1:length( ifns ) ) 
+  localpcamat[i,] = multichanneltovector( wlist[[i]], msk )
+localpca = localpcamat %*% dpca$pca$v
+for ( k in c(1,2,3, min( ncol(localpca), 14) ) )
+  {
+  locmdl = data.frame( pck = localpca[,k], size = mysizes )
+  mdl = lm(  pck ~ size, data=locmdl )
+  ttl = paste( 'Deformation Component',k,'versus deformation pca' )
+  visreg::visreg( mdl, main=ttl )
+  }
 ```
 
+
+Now let us see greater locality of these component by comparing to the jacobian.
+
+```{r allometryj}
+k = 1
+jmdl = lm( jmat ~ localpca[,k] +  mysizes )
+jmdl = lm( jmat ~ localpca[,k] )
+bmdl = bigLMStats( jmdl )
+pcaimg = makeImage( msk, bmdl$beta.t[1,])
+if ( nrow( bmdl$beta.t ) > 1 )
+  sizimg = makeImage( msk, bmdl$beta.t["mysizes",])
+if ( nrow( bmdl$beta.t ) == 1 ) {
+  smdl = lm( jmat ~ mysizes )
+  smdl = bigLMStats( smdl )
+  sizimg = makeImage( msk, smdl$beta.t[1,])
+}
+```
+
+Size beta image concentrated in the center of the fish.
+
+```{r allometryjv1}
+plot( msk, sizimg, window.overlay=c(3,max(sizimg)), doCropping=F )
+```
+
+Alternative PCA image "expansion" at superior and inferior regions and 
+"contraction" anterior/posterior.
+
+```{r allometryjv2}
+vimg = abs( pcaimg )
+plot( msk, list( pcaimg, pcaimg*(-1) ), window.overlay=c(1, max(vimg) ), 
+      color.overlay=c('red','blue'), doCropping=F )
+```
