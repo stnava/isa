@@ -213,7 +213,8 @@ mypca = svd( pointmat )
 plot( ts( mypca$d / sum( mypca$d ) ) )
 # convert back to a deformation
 defmat = matrix( t(mypca$v), nrow=min( dim(pointmat) ), ncol=length( lmCents ) )
-plot( temp[,1], temp[,2]*-1, main='template and Kth deformation', cex=1.5, lwd=3 )
+plot( lmCents[,1]*1.1, lmCents[,2]*-1.1, main='template and Kth deformation', cex=1.5, lwd=3, col='white')
+points( lmCents[,1]*1.0, lmCents[,2]*-1.0,  cex=1.5, lwd=3 )
 for ( k in 1:min( dim(pointmat) ) )
   {
   def1 = lmCents + defmat[,k] * 4.0
