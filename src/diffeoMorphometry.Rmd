@@ -18,15 +18,20 @@ Templates: a reference shape which may be chosen arbitrarily or estimated as the
 Diffeomorphisms allows us to map data back and forth between spaces in particular between the template space (which may contain landmark or segmentation data) and the subject space.  Furthermore, the template stores information in a common framework and acts as a digital storage system for population information.  The template is an index, like an excel or csv file, to the image or shape-related information across a population.
 
 We exploit diffeomorphisms in order to perform automated landmarking, as shown below.  If one is to employ this procedure, then it may be valuable to:
+
 * Evaluate the landmark accuracy by labeling not only the template but a subset of your cohort;
+
 * Study the principal components of not only the landmark positions but also the full deformation fields;
+
 * Look at the jacobian as well as PCA of the deformations or landmark points;
+
 * Consider methods such as kernel PCA instead of standard PCA in order to decompose one's data.
+
 In other words, this is an information rich analysis approach and all of these methods are valuable for gaining insight into one's data.
 
 # Data
 
-The [Brown 1070-Shape Database](http://vision.lems.brown.edu/sites/default/files/1070db.tar.gz) provides a simple set of images that we can process quickly and that provide an analogy to our larger scale processing.  We choose 20 `flatfish` examples, one of which will serve as the template.
+The [Brown 1070 Shape Database](http://vision.lems.brown.edu/sites/default/files/1070db.tar.gz) provides a simple set of images that we can process quickly and that provide an analogy to our larger scale processing.  We choose 20 `flatfish` examples, one of which will serve as the template.
 
 # Procedure 
 
@@ -253,12 +258,16 @@ for ( k in c(1,2,3, min( ncol(localpca), 14) ) )
 ```
 
 
-Now let us see greater locality of these component by comparing to the jacobian.
+Now let us see greater locality of these component by comparing to the jacobian which is 
+a measure of "local" volumetric change.  Clearly, this relates to not only global size 
+but also the principal components of deformation.
 
 ```{r allometryj}
 k = 1
-jmdl = lm( jmat ~ localpca[,k] +  mysizes )
-jmdl = lm( jmat ~ localpca[,k] )
+# control for overall size
+jmdl = lm( jmat ~ localpca[,k] +  mysizes ) 
+# jmdl = lm( jmat ~ mypca$u[,k] ) # dont control for size
+jmdl = lm( jmat ~ mypca$u[,k] +  mysizes ) 
 bmdl = bigLMStats( jmdl )
 pcaimg = makeImage( msk, bmdl$beta.t[1,])
 if ( nrow( bmdl$beta.t ) > 1 )
