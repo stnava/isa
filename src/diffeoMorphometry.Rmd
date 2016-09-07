@@ -1,0 +1,233 @@
+---
+title: "Procrustes analysis via diffeomorphic image matching"
+author: "BB Avants, JT Duda, NJ Tustison"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+# Introduction
+
+Automated mapping of biological structures will improve the reliability and scope of classical approaches to morphometry.  We illustrate how this can be accomplished with recently developed methods for diffeomorphic image or shape mapping.
+
+# Methods
+
+Diffeomorphisms 
+
+Templates
+
+Mapping data back and forth between spaces
+
+Automated landmarking
+
+# Data
+
+The [Brown 1070-Shape Database](http://vision.lems.brown.edu/sites/default/files/1070db.tar.gz) provides a simple set of images that we can process quickly and that provide an analogy to our larger scale processing.
+
+# Procedure 
+
+
+We define the template by selecting an individual from the flatfish database.  We landmark this image manually and perform preprocessing.  This should be done carefully as it will impact the full analysis pipeline.  Alternatively, one might leverage an "optimal" template that can be derived from input data as in the example:
+[ANTs template building example](https://github.com/ntustison/TemplateBuildingExample).
+
+```{r template}
+library( ANTsR )
+# should set this directory manually!
+bd=path.expand( "~/data/antsExamples/isa/data/flatfish/" )
+if ( ! dir.exists( bd ) )
+  stop("set base directory to point to flatfish example output.")
+templateIn = antsImageRead( paste(bd,'flatfish20.png',sep='') )
+landmarks = antsImageRead( paste(bd,'landmarks.nii.gz',sep='') )
+template = thresholdImage( templateIn, 0, 0 )
+msk = getMask( template ) %>% iMath( "MD", 1 )
+template = cropImage( template, msk ) %>% iMath("PadImage",20)
+landmarks = cropImage( landmarks, msk ) %>% iMath("PadImage",20)
+msk = getMask( template ) %>% iMath( "MD", 1 )
+plot( template, landmarks, doCropping=FALSE )
+```
+
+Collect the images.
+
+```{r icoll}
+ifns = rev( Sys.glob( paste(bd,'flatfish*.png',sep='') ) )[-1] # exclude template
+ilist = list( )
+for ( i in 1:length( ifns ) ) {
+  ilist[[ i ]] = thresholdImage( antsImageRead( ifns[ i ] ), 0, 0  )
+  plot( ilist[[ i ]], doCropping=F )
+  }
+```
+
+
+Reorient the images with a *rigid* mapping such that they match the template.
+
+```{r ireo}
+rilist = list( )
+tht = seq( from=0,to=350, by=10 )
+templates = smoothImage( template, 0.5 )
+for ( i in 1:length( ifns ) ) {
+  simg = smoothImage( ilist[[ i ]], 0.5 )
+  mival<-invariantImageSimilarity( templates, simg, thetas = tht, transform='Rigid' )
+  mapped = antsApplyTransforms( template, ilist[[ i ]], transformlist=mival[[2]], 
+                                interpolator = 'near' )
+  rilist[[ i ]] = mapped
+  edges = mapped - iMath(mapped,"ME",5)
+  plot( templates,  edges, alpha = 1, doCropping=FALSE )
+  }
+```
+
+
+We now compute the deformable mapping.  The transformation model is the 
+composition of an affine and deformable mapping, computed after the rigid 
+transformation from above.  We compute the map then merge the total map 
+into a composite deformation field such that we capture both shape and 
+size in the field.
+
+```{r ireg}
+reglist = list( )
+wlist = list( )
+for ( i in 1:length( ifns ) ) {
+  areg = antsRegistration( template, rilist[[ i ]], typeofTransform = 'SyN' )
+  reglist[[ i ]] = areg$warpedmov
+  edges = reglist[[ i ]] - iMath(reglist[[ i ]],"ME",5)
+  plot( template,  edges, alpha = 1, doCropping=FALSE )
+  wlist[[ i ]] = composeTransformsToField( template, areg$fwd )
+  }
+```
+
+
+Use the jacobian to get a size estimate (also compare with the binary segmentation).
+
+```{r mysizes}
+mysizes = rep( NA, length( ifns ) )
+mysizesJ = rep( NA, length( ifns ) )
+for ( i in 1:length( ifns ) ) {
+  mysizes[[ i ]] = sum( rilist[[ i ]] )
+  jac = createJacobianDeterminantImage( msk, wlist[[ i ]] )
+  mysizesJ[[ i ]] = sum( jac[ msk == 1 ] )
+}
+plot( mysizes, mysizesJ, main='Jacobian to binary volume comparison' )
+```
+
+Compute PCA based on the full deformation field.
+
+```{r computer}
+if ( !exists("dpca") )
+####
+  dpca = multichannelPCA( wlist, msk, pcaOption='randPCA', verbose=FALSE )
+# dpca = multichannelPCA( wlist, msk, k=10, pcaOption='eanat', verbose=TRUE )
+# dpca = multichannelPCA( wlist, msk, k=50, pcaOption=2000, verbose=FALSE, auxiliaryModality = imat )
+# dpca = multichannelPCA( wlist, msk, k=8, pcaOption='fastICA', verbose=TRUE )
+####
+```
+
+Show the shape change and its magnitude / locality.
+
+```{r viewer}
+mxk=ncol( dpca$pca$v )
+for ( ww in 1:4 )
+  {
+  myw = dpca$pcaWarps[[ww]] * 0.25 / max( abs( dpca$pcaWarps[[ww]]  ) )
+  myw = smoothImage( myw, antsGetSpacing( template ) * 1.0 )
+  warpTx = antsrTransformFromDisplacementField(  myw  )
+  # compose several times to get a visual effect
+  wtxlong = list( ) ; for ( i in 1:20 ) wtxlong[[i]]=warpTx
+  warped = applyAntsrTransform( wtxlong, data = template,
+    reference = template )
+  edges = warped - iMath(warped,"ME",3)
+  plot( template, edges, window.overlay = c(0.1,1), doCropping=F )
+  }
+```
+
+Create a random fish.
+
+```{r randspcaresult}
+# now make a "random" face
+combvec = dpca$pcaWarps[[1]]
+for ( i in 2:mxk )
+  combvec = combvec + dpca$pcaWarps[[i]] * rnorm(1, sd=5)
+combvec = combvec * 0.25 / max( abs( combvec  ) )
+warpTx = antsrTransformFromDisplacementField( combvec  )
+# compose several times to get a visual effect
+wtxlong = list( ) ; for ( i in 1:12 ) wtxlong[[i]]=warpTx
+warped = applyAntsrTransform( wtxlong, data = template,
+  reference = template )
+edges = warped - iMath(warped,"ME",3)
+plot( template, edges, window.overlay = c(0.1,1), doCropping=F )
+```
+
+
+
+The previous examples show how we can use an unbiased decomposition 
+of the data in order to understand shape variation.  However, this 
+full decomposition may obscure details that we may be able to see if
+we focus on specific landmarks, as in traditional geometric morphometry [ref].
+
+
+```{r geomorph0}
+library( ANTsR )
+# read the landmarks
+plot( template, landmarks, doCropping=F )
+mydim = landmarks@dimension
+```
+
+
+Map all of these points to the individual sample space to treat them as landmarks.
+
+```{r lmMorph}
+lm = antsImageClone( landmarks )
+lmCents = getCentroids( lm, clustparam = 3 )[,1:mydim]
+plot( lmCents[,1], lmCents[,2]*-1, main='template and subject points')
+pointmat = matrix( nrow = length( rilist ), ncol = length( lmCents ) )
+mycolors = palette( rainbow( length( rilist ) ) )
+p = nrow( lmCents )
+for ( k in 1:length( rilist ) )
+  {
+  warpTx = antsrTransformFromDisplacementField( wlist[[ k ]]  )
+  lmCentsW = lmCents * 0
+  for ( j in 1:nrow( lmCents ))
+    lmCentsW[j,] = applyAntsrTransform( warpTx, lmCents[j,], reference = msk )
+  deltaPoints = lmCentsW - lmCents
+  pointmat[ k ,  ] = as.numeric( deltaPoints  )
+  points( lmCentsW[,1], lmCentsW[,2]*(-1), col=mycolors[ k ] )
+  }
+```
+
+Run pca on the point deformation matrix.
+
+```{r mypca,eval=TRUE}
+mypca = svd( pointmat )
+plot( ts( mypca$d / sum( mypca$d ) ) )
+# convert back to a deformation
+defmat = matrix( t(mypca$v), nrow=min( dim(pointmat) ), ncol=length( lmCents ) )
+for ( k in 1:min( dim(pointmat) ) )
+  {
+  def1 = lmCents + defmat[,k] * 4.0
+  temp = rbind( lmCents, def1 )
+  plot( temp[,1], temp[,2]*-1, main='template and Kth deformation', cex=1.5, lwd=3 )
+  points( def1[,1], def1[,2]*-1, col=mycolors[ k ], cex=1.5, lwd=3 )
+  }
+```
+
+
+We can regress the size measurement against each of these principal components 
+in order to undertand allometry.
+
+```{r allometry}
+# regress size data on pcs
+print( summary( lm( mypca$u[,1:4] ~ mysizes ) ) )
+plot( mysizes,  mypca$u[,1], main='Component 1 versus size')
+plot( mysizes,  mypca$u[,2], main='Component 2 versus size')
+plot( mysizes,  mypca$u[,4], main='Component 3 versus size')
+```
+
+Allometry based on full deformation.  Note that much of 
+the global scaling portion of the transformation is 
+contained in the affine transformation.
+
+```{r allometry2}
+# regress size data on pcs
+print( summary( lm( dpca$pca$u[,1:4] ~ mysizes ) ) )
+plot( mysizes,  dpca$pca$u[,1], main='Deformation Component 1 versus deformation pca')
+plot( mysizes,  dpca$pca$u[,2], main='Deformation Component 2 versus size')
+plot( mysizes,  dpca$pca$u[,3], main='Deformation Component 3 versus size')
+```
+
