@@ -20,3 +20,4 @@
 /typo3temp/
 .DS_Store
 data/.DS_Store
+*.html
