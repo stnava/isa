@@ -65,6 +65,8 @@ for ( i in 1:length( ifns ) ) {
   ilist[[ i ]] = thresholdImage( antsImageRead( ifns[ i ] ), 0, 0  )
   plot( ilist[[ i ]], doCropping=F )
   }
+fishClasses = rep( "Fat", length( ifns ) )
+fishClasses[ c(2,4,5,6,7,13,15,16,17,18) ] = "Thin"
 ```
 
 
@@ -129,7 +131,7 @@ Compute PCA based on the full deformation field.
 if ( !exists("dpca") )
 ####
 # this option can compute > n components
-#  dpca = multichannelPCA( wlist, msk, k=20, pcaOption=250, verbose=FALSE  ) 
+#  dpca = multichannelPCA( wlist, msk, k=20, pcaOption=round(sum(msk)*0.2), verbose=FALSE  ) 
   dpca = multichannelPCA( wlist, msk, pcaOption='svd', verbose=FALSE ) # standard
 #  dpca = multichannelPCA( wlist, msk, pcaOption='randPCA', verbose=FALSE ) # big data standard
 # dpca = multichannelPCA( wlist, msk, k=10, pcaOption='eanat', verbose=FALSE )
@@ -254,6 +256,7 @@ for ( k in c(1,2,3, min( ncol(localpca), 14) ) )
   mdl = lm(  pck ~ size, data=locmdl )
   ttl = paste( 'Deformation Component',k,'versus deformation pca' )
   visreg::visreg( mdl, main=ttl )
+  Sys.sleep( 3 )
   }
 ```
 
@@ -267,7 +270,8 @@ k = 1
 # control for overall size
 jmdl = lm( jmat ~ localpca[,k] +  mysizes ) 
 # jmdl = lm( jmat ~ mypca$u[,k] ) # dont control for size
-jmdl = lm( jmat ~ mypca$u[,k] +  mysizes ) 
+# jmdl = lm( jmat ~ mypca$u[,k] +  mysizes ) 
+# jmdl = lm( jmat ~ localpca[,k] ) 
 bmdl = bigLMStats( jmdl )
 pcaimg = makeImage( msk, bmdl$beta.t[1,])
 if ( nrow( bmdl$beta.t ) > 1 )
@@ -293,3 +297,21 @@ vimg = abs( pcaimg )
 plot( msk, list( pcaimg, pcaimg*(-1) ), window.overlay=c(1, max(vimg) ), 
       color.overlay=c('red','blue'), doCropping=F )
 ```
+
+
+Let us look at a group difference .... We use the "thin" and "fat" fish classes 
+that were generated from visual inspection.
+
+```{r groupdiff}
+fishClassesF = factor( fishClasses )
+groupmdl = lm(  localpca ~ fishClassesF   ) 
+bgmdl = bigLMStats( groupmdl )
+print( bgmdl$beta.pval )
+bgroupmdl = glm(   fishClassesF ~ localpca[,1:3] + mysizes, family='binomial'  ) 
+print( summary( bgroupmdl ) )
+bgroupmdl = glm(   fishClassesF ~ localpca[,1:3], family='binomial'  ) 
+print( summary( bgroupmdl ) )
+```
+
+
+
