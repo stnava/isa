@@ -1,8 +1,11 @@
 ---
 title: "Procrustes analysis via diffeomorphic image matching"
 author: "BB Avants, JT Duda, NJ Tustison"
-date: "`r Sys.Date()`"
-output: html_document
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  prettydoc::html_pretty:
+    theme: hpstr
+    highlight: github
 ---
 
 # Introduction
@@ -44,6 +47,7 @@ Compute the PCA basis.
 ```{r computer}
 if ( !exists("dpca") )
 ####
+# dpca = multichannelPCA( wlist, msk, k=50, sigma = 2, pcaOption=2000, verbose=FALSE )
   dpca = multichannelPCA( wlist, msk, pcaOption='randPCA', verbose=FALSE )
 # dpca = multichannelPCA( wlist, msk, k=10, pcaOption='eanat', verbose=TRUE )
 # dpca = multichannelPCA( wlist, msk, k=50, pcaOption=2000, verbose=FALSE, auxiliaryModality = imat )
