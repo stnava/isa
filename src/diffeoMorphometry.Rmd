@@ -170,12 +170,14 @@ for ( ww in 1:mxk )
 Create a random fish.
 
 ```{r randspcaresult}
-# now make a "random" face
+# now make a few "random" face
+for ( few in 1:3 ) {
 mxk=9
-combvec = dpca$pcaWarps[[1]]* rnorm(1, sd=15) * 2
+scl = 2
+combvec = dpca$pcaWarps[[1]]* rnorm(1, sd=15) * scl * dpca$pca$d[1]/max( dpca$pca$d[1])
 for ( i in 2:mxk )
-  combvec = combvec + dpca$pcaWarps[[i]] * rnorm(1, sd=15) * 2
-combvec = combvec * 0.25 / max( abs( combvec  ) )
+  combvec = combvec + dpca$pcaWarps[[i]] * rnorm(1, sd=15) * scl* dpca$pca$d[i]/max( dpca$pca$d[1])
+# combvec = combvec * 0.25 / max( abs( combvec  ) )
 warpTx = antsrTransformFromDisplacementField( combvec  )
 # compose several times to get a visual effect
 wtxlong = list( ) ; for ( i in 1:12 ) wtxlong[[i]]=warpTx
@@ -183,6 +185,7 @@ warped = applyAntsrTransform( wtxlong, data = template,
   reference = template )
 edges = warped - iMath(warped,"ME",3)
 plot( template, edges, window.overlay = c(0.1,1), doCropping=F )
+}
 ```
 
 
