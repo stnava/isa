@@ -42,7 +42,7 @@ we do not explore this here.
 ```{r template}
 library( ANTsR )
 # should set this directory manually!
-bd=path.expand( "~/data/antsExamples/isa/data/flatfish/" )
+bd=path.expand( "~/code/isa/data/flatfish/" )
 if ( ! dir.exists( bd ) )
   stop("set base directory to point to flatfish example output.")
 templateIn = antsImageRead( paste(bd,'flatfish20.png',sep='') )
@@ -74,11 +74,14 @@ Reorient the images with a *rigid* mapping such that they match the template.  W
 
 ```{r ireo}
 rilist = list( )
-tht = seq( from=0,to=350, by=10 )
+tht = seq( from=0,to=350, by=15 )
 templates = smoothImage( template, 0.5 )
 for ( i in 1:length( ifns ) ) {
   simg = smoothImage( ilist[[ i ]], 0.5 )
-  mival<-invariantImageSimilarity( templates, simg, thetas = tht, transform='Rigid' )
+  mival<-invariantImageSimilarity( templates, simg, thetas = tht, 
+                                   localSearchIterations = 5,
+                                   metric='GC',
+                                   transform='Rigid' )
   mapped = antsApplyTransforms( template, ilist[[ i ]], transformlist=mival[[2]], 
                                 interpolator = 'near' )
   rilist[[ i ]] = mapped
@@ -117,26 +120,30 @@ mysizesJ = rep( NA, length( ifns ) )
 jlist = list( )
 for ( i in 1:length( ifns ) ) {
   mysizes[[ i ]] = sum( rilist[[ i ]] )
-  jac = createJacobianDeterminantImage( msk, wlist[[ i ]] )
-  mysizesJ[[ i ]] = sum( jac[ msk == 1 ] )
+  jac = createJacobianDeterminantImage( msk, wlist[[ i ]], geom=FALSE )
+  mysizesJ[[ i ]] = sum( jac[ iMath(msk,"ME",1) == 1 ] )
   jlist[[ i ]] = jac
 }
 jmat = imageListToMatrix( jlist, msk )
-plot( mysizes, mysizesJ, main='Jacobian to binary volume comparison' )
+lims = c( 4500, 6700 )
+print( mean( abs( mysizes - mysizesJ )) )
+plot( mysizes, mysizesJ, main='Jacobian to binary volume comparison', 
+      xlim = lims, ylim = lims )
 ```
 
 Compute PCA based on the full deformation field.
 
 ```{r computer}
+mskpca = msk * 0 + 1
 if ( !exists("dpca") )
 ####
 # this option can compute > n components
-#  dpca = multichannelPCA( wlist, msk, k=20, pcaOption=round(sum(msk)*0.2), verbose=FALSE  ) 
-  dpca = multichannelPCA( wlist, msk, pcaOption='svd', verbose=FALSE ) # standard
-#  dpca = multichannelPCA( wlist, msk, pcaOption='randPCA', verbose=FALSE ) # big data standard
-# dpca = multichannelPCA( wlist, msk, k=10, pcaOption='eanat', verbose=FALSE )
-# dpca = multichannelPCA( wlist, msk, k=50, pcaOption=2000, verbose=FALSE, auxiliaryModality = imat )
-# dpca = multichannelPCA( wlist, msk, k=8, pcaOption='fastICA', verbose=FALSE )
+#  dpca = multichannelPCA( wlist, mskpca, k=20, pcaOption=round(sum(mskpca)*0.2), verbose=FALSE  ) 
+#  dpca = multichannelPCA( wlist, mskpca, pcaOption='svd', verbose=FALSE ) # standard
+  dpca = multichannelPCA( wlist, mskpca, pcaOption='randPCA', verbose=FALSE ) # big data standard
+# dpca = multichannelPCA( wlist, mskpca, k=10, pcaOption='eanat', verbose=FALSE )
+# dpca = multichannelPCA( wlist, mskpca, k=50, pcaOption=2000, verbose=FALSE, auxiliaryModality = imat )
+# dpca = multichannelPCA( wlist, mskpca, k=8, pcaOption='fastICA', verbose=FALSE )
 ####
 ```
 
@@ -147,7 +154,7 @@ mxk = ncol( dpca$pca$v )
 mxk = 4 # FIXME if you want to look at more components
 for ( ww in 1:mxk )
   {
-  myw = dpca$pcaWarps[[ww]] * 0.25 / max( abs( dpca$pcaWarps[[ww]]  ) )
+  myw = dpca$pcaWarps[[ww]] * ( -0.1 ) / max( abs( dpca$pcaWarps[[ww]]  ) )
 #  myw = smoothImage( myw, antsGetSpacing( template ) * 1.0 )
   warpTx = antsrTransformFromDisplacementField(  myw  )
   # compose several times to get a visual effect
@@ -164,9 +171,10 @@ Create a random fish.
 
 ```{r randspcaresult}
 # now make a "random" face
-combvec = dpca$pcaWarps[[1]]
+mxk=9
+combvec = dpca$pcaWarps[[1]]* rnorm(1, sd=15) * 2
 for ( i in 2:mxk )
-  combvec = combvec + dpca$pcaWarps[[i]] * rnorm(1, sd=5)
+  combvec = combvec + dpca$pcaWarps[[i]] * rnorm(1, sd=15) * 2
 combvec = combvec * 0.25 / max( abs( combvec  ) )
 warpTx = antsrTransformFromDisplacementField( combvec  )
 # compose several times to get a visual effect
@@ -246,9 +254,9 @@ Allometry based on alternative PCA of the full deformation field.
 
 ```{r allometry2}
 # regress size data on pcs
-localpcamat = matrix( nrow = length( ifns ), ncol = sum( msk )*mydim  )
+localpcamat = matrix( nrow = length( ifns ), ncol = sum( mskpca )*mydim  )
 for ( i in 1:length( ifns ) ) 
-  localpcamat[i,] = multichanneltovector( wlist[[i]], msk )
+  localpcamat[i,] = multichannelToVector( wlist[[i]], mskpca )
 localpca = localpcamat %*% dpca$pca$v
 for ( k in c(1,2,3, min( ncol(localpca), 14) ) )
   {
