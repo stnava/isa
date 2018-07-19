@@ -138,10 +138,10 @@ mskpca = msk * 0 + 1
 if ( !exists("dpca") )
 ####
 # this option can compute > n components
-  dpca = multichannelPCA( wlist, mskpca, k=25, pcaOption=50, verbose=FALSE  ) 
+dpca = multichannelPCA( wlist, mskpca, k=25, pcaOption=50, verbose=FALSE  ) 
 #  dpca = multichannelPCA( wlist, mskpca, pcaOption='svd', verbose=FALSE ) # standard
 #  dpca = multichannelPCA( wlist, mskpca, pcaOption='randPCA', verbose=FALSE ) # big data standard
-# dpca = multichannelPCA( wlist, mskpca, k=10, pcaOption='eanat', verbose=FALSE )
+# dpca = multichannelPCA( wlist, mskpca, k=20, pcaOption='eanat', verbose=FALSE )
 # dpca = multichannelPCA( wlist, mskpca, k=50, pcaOption=2000, verbose=FALSE, auxiliaryModality = imat )
 # dpca = multichannelPCA( wlist, mskpca, k=8, pcaOption='fastICA', verbose=FALSE )
 ####
@@ -150,7 +150,6 @@ if ( !exists("dpca") )
 Show the shape change and its magnitude / locality.
 
 ```{r viewer}
-mxk = ncol( dpca$pca$v )
 mxk = 4 # FIXME if you want to look at more components
 for ( ww in 1:mxk )
   {
@@ -182,7 +181,8 @@ for ( i in 1:length( wlist ) ) {
 }
 pcaReconCoeffsMeans = colMeans( pcaReconCoeffs )
 pcaReconCoeffsSD = apply( pcaReconCoeffs, FUN=sd, MARGIN=2 )
-plot( (dpca$pca$d), pcaReconCoeffsSD )
+if ( length(dpca$pca$d) == length( pcaReconCoeffsSD ) )
+  plot( (dpca$pca$d), pcaReconCoeffsSD )
 ################################
 for ( i in 1:length( wlist ) ) {
   temp =  matrix( pcaReconCoeffs[ i,  ], nrow = 1 ) -
@@ -191,12 +191,12 @@ for ( i in 1:length( wlist ) ) {
     temp %*% ( diag( 1/pcaReconCoeffsSD ) %*% t( temp ) )
 }
 shapeDistancesNorm = var( shapeDistances )
-shapeProbabilities = exp( -1.0 * shapeDistances/ (0.005 * shapeDistancesNorm ) )
+shapeProbabilities = exp( -1 * shapeDistances/ (0.005 * shapeDistancesNorm ) )
 shapeProbabilities
 hist( abs(pcaReconCoeffs[,2]))
 computeShapeProbability <-function( newCoeffs, 
           shapeDistancesNormIn, pcaCoefMeans, 
-          pcaReconCoeffsSDIn, shapePermit = 0.005) {
+          pcaReconCoeffsSDIn, shapePermit = 0.005 ) {
   temp =  matrix( newCoeffs, nrow = 1 ) - pcaCoefMeans
   locdist = temp %*% ( diag( 1/pcaReconCoeffsSDIn ) %*% t( temp ) )
   shapeProbability = exp( -1.0 * locdist/ ( shapePermit * shapeDistancesNormIn ) )
@@ -207,21 +207,21 @@ computeShapeProbability(  pcaReconCoeffs[ 1,  ],
   shapeDistancesNorm, pcaReconCoeffsMeans, pcaReconCoeffsSD  )
 ```
 
-Create a random fish.
+Create a random fish.  Draw from a multivariate normal distribution, please.
+
 
 ```{r randspcaresult}
-set.seed(1110999)
+library( MASS )
+# mvrnorm(n = 1, mu, Sigma, tol = 1e-6, empirical = FALSE, EISPACK = FALSE)
+mysigma = cov( pcaReconCoeffs )
+# set.seed(1110999)
 # now make a few "random" fish
 for ( few in 1:3 ) {
-mxk=12
+mxk = length( pcaReconCoeffsMeans )
 ncomp = 5
 scl = 1/ncomp
-sdscl = 1.2
-locparams = pcaReconCoeffsMeans
-locparams[ 1 ] = rnorm(1, mean=pcaReconCoeffsMeans[1], sd=pcaReconCoeffsSD[1]*sdscl)
-for ( i in 2:mxk ) {
-  locparams[ i ] = rnorm(1, mean=pcaReconCoeffsMeans[i], sd=pcaReconCoeffsSD[i]*sdscl)
-  }
+sdscl = 0.5
+locparams = MASS::mvrnorm( 1, pcaReconCoeffsMeans,  mysigma )
 for ( i in 1:length( locparams ) )
   if ( i == 1 )
     combvec = dpca$pcaWarps[[i]] * locparams[i] * scl else 
