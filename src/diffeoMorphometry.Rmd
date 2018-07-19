@@ -138,7 +138,7 @@ mskpca = msk * 0 + 1
 if ( !exists("dpca") )
 ####
 # this option can compute > n components
-dpca = multichannelPCA( wlist, mskpca, k=25, pcaOption=50, verbose=FALSE  ) 
+dpca = multichannelPCA( wlist, mskpca, k=4, pcaOption=50, verbose=FALSE  ) 
 #  dpca = multichannelPCA( wlist, mskpca, pcaOption='svd', verbose=FALSE ) # standard
 #  dpca = multichannelPCA( wlist, mskpca, pcaOption='randPCA', verbose=FALSE ) # big data standard
 # dpca = multichannelPCA( wlist, mskpca, k=20, pcaOption='eanat', verbose=FALSE )
@@ -173,11 +173,11 @@ We need this because not all of the allowable decompositions are SVD-like.
 
 ```{r reconparams}
 shapeDistances = rep( 0.0, length( wlist ) )
-pcaReconCoeffs = matrix( nrow = length( wlist ), ncol = ncol(dpca$pca$v) )
+pcaReconCoeffs = matrix( nrow = length( wlist ), ncol = ncol(dpca$pca$v)  )
 for ( i in 1:length( wlist ) ) {
   wvec = multichannelToVector( wlist[[i]], mskpca )
-  mdl = lm( wvec ~ dpca$pca$v )
-  pcaReconCoeffs[ i,  ] = coefficients(mdl)[-1]
+  mdl = lm( wvec ~ 0 + dpca$pca$v )
+  pcaReconCoeffs[ i,  ] = coefficients(mdl)
 }
 pcaReconCoeffsMeans = colMeans( pcaReconCoeffs )
 pcaReconCoeffsSD = apply( pcaReconCoeffs, FUN=sd, MARGIN=2 )
@@ -207,21 +207,190 @@ computeShapeProbability(  pcaReconCoeffs[ 1,  ],
   shapeDistancesNorm, pcaReconCoeffsMeans, pcaReconCoeffsSD  )
 ```
 
+
+Reconstruct one of the original fish images from the basis and the template.
+
+```{r reconFish}
+
+ncomp = 10
+scl = 1/ncomp
+
+k = 16 # which fish
+
+locparams = pcaReconCoeffs[ k,  ] * (-1)
+for ( i in 1:length( locparams ) )
+  if ( i == 1 )
+    combvec = dpca$pcaWarps[[i]] * locparams[i] * scl else 
+      combvec = combvec + dpca$pcaWarps[[i]] * locparams[i] * scl
+print( paste( "shape prob:",computeShapeProbability(  locparams, 
+  shapeDistancesNorm, pcaReconCoeffsMeans, pcaReconCoeffsSD  ) ) )
+# combvec = combvec * 0.25 / max( abs( combvec  ) )
+warpTx = antsrTransformFromDisplacementField( combvec * (1.0) )
+# compose several times to get a visual effect
+wtxlong = list( ) ; for ( i in 1:ncomp ) wtxlong[[i]]=warpTx
+warped = applyAntsrTransform( wtxlong, data = template,
+  reference = template ) %>% thresholdImage( 0.25, Inf )
+
+plot( warped, rilist[[k]], window.img=c(-1,1),doCropping=F,alpha=0.5)
+
+```
+
+
+PCA-based image registration.  Ultimately similar to what we would have with a deep learning method.  Ie a basis set that gets reweighted for different images.
+
+```{r pcaRegistration,eval=TRUE}
+library(optimx)
+k = 13
+locparams = colMeans( pcaReconCoeffs[ , ] )
+mypr = abs( cor( pcaReconCoeffs ) )
+mypr[ mypr < 0.5  ] = 0
+mypr = mypr / 
+  Matrix::rowSums( mypr)
+imageMetricGrad <- function( pcaParams, fImg, mImg, dpcaIn, metricIn, 
+                             parameterRegularization, 
+                             paramScales,
+                             gradStep, whichk ) {
+  ncomp = 3
+  scl = 1/ncomp
+
+  deriv = pcaParams * 0
+  eps = gradStep
+  for ( k in whichk )
+    {
+    pcaParamsA = pcaParamsB = pcaParams
+    pcaParamsA[k] = pcaParamsA[k] - eps * paramScales[k]
+    pcaParamsB[k] = pcaParamsB[k] + eps * paramScales[k]
+    for ( i in 1:length( pcaParams ) )
+      if ( i == 1 )
+        combvec = dpcaIn$pcaWarps[[i]] * pcaParamsA[i] * scl else 
+          combvec = combvec + dpcaIn$pcaWarps[[i]] * pcaParamsA[i] * scl
+    warpTx = antsrTransformFromDisplacementField( combvec )
+    wtxlong = list( ) 
+    for ( i in 1:ncomp ) {
+      wtxlong[[i]] = warpTx
+      }
+    warped = applyAntsrTransform( wtxlong, data = mImg,
+      reference = fImg )
+    antsrMetricSetMovingImage( metricIn, warped )
+    antsrMetricInitialize( metricIn )
+    metricVal = antsrMetricGetValue( metricIn ) 
+    
+    for ( i in 1:length( pcaParams ) )
+      if ( i == 1 )
+        combvec = dpcaIn$pcaWarps[[i]] * pcaParamsB[i] * scl else 
+          combvec = combvec + dpcaIn$pcaWarps[[i]] * pcaParamsB[i] * scl
+    warpTx = antsrTransformFromDisplacementField( combvec )
+    wtxlong = list( ) 
+    for ( i in 1:ncomp ) {
+      wtxlong[[i]] = warpTx
+      }
+    warped = applyAntsrTransform( wtxlong, data = mImg,
+      reference = fImg )
+    antsrMetricSetMovingImage( metricIn, warped )
+    antsrMetricInitialize( metricIn )
+    metricVal2 = antsrMetricGetValue( metricIn ) 
+    deriv[ k ] = eps * ( metricVal2 - metricVal )
+#  print( paste(metricVal2,metricVal))
+    }
+  return(  as.numeric( parameterRegularization %*% deriv  ) )
+}
+
+r16 = antsImageRead( getANTsRData( 'r16' ) )
+fixedI = r16 # try the brain - see how improbable a solution we get
+fixedI = rilist[[k]]
+metric = antsrMetricCreate( fixedI, template, type="MeanSquares")
+antsrMetricInitialize( metric )
+
+imageMetric <- function( pcaParams, fImg, mImg, dpcaIn, metricIn, 
+                         parameterRegularization ) {
+#  pcaParams = as.numeric( parameterRegularization %*% pcaParams  )
+  ncomp = 3
+  scl = 1/ncomp
+  for ( i in 1:length( pcaParams ) )
+    if ( i == 1 )
+      combvec = dpcaIn$pcaWarps[[i]] * pcaParams[i] * scl else 
+        combvec = combvec + dpcaIn$pcaWarps[[i]] * pcaParams[i] * scl
+  warpTx = antsrTransformFromDisplacementField( combvec )
+  wtxlong = list( ) 
+  for ( i in 1:ncomp ) wtxlong[[i]] = warpTx
+  warped = applyAntsrTransform( wtxlong, data = mImg,
+    reference = fImg )
+  antsrMetricSetMovingImage( metricIn, warped )
+  antsrMetricInitialize( metricIn )
+  metricVal = antsrMetricGetValue( metricIn ) 
+  return( metricVal )
+}
+
+sclParams = pcaReconCoeffsSD / max( pcaReconCoeffsSD )
+for( poo in 1:1) {
+#  drivr = imageMetricGrad( locparams, rilist[[k]], template, dpca, metric,   
+#                 parameterRegularization  = mypr, 
+#                 paramScales = rep(1,length(sclParams)),
+#                 gradStep=1., whichk=1:10 )
+#  locparams = locparams - drivr*1e6
+#  print( imageMetric( locparams, rilist[[k]], template, dpca, metric   ) )
+  }
+
+ctl = list(maxit = 1000, temp = 20, parscale = sclParams )
+ctl = list(maxit = 10, parscale = sclParams )
+t1=Sys.time()
+
+# pcaRegistration = nlm( f=imageMetric, p=locparams, 
+#  metricIn=metric,
+#  dpcaIn=dpca, fImg=rilist[[k]], mImg=template,
+#  parameterRegularization=mypr, fscale = 0, stepmax = 10 )
+# 
+# pcaRegistration = optim( locparams, imageMetric, # gr=imageMetricGrad,
+#  method = "L-BFGS-B", control = ctl, metricIn=metric,
+#  dpcaIn=dpca, fImg=rilist[[k]], mImg=template,
+#  parameterRegularization=mypr )
+library( neldermead )
+library(dfoptim) # derivative free optimization
+pcaRegistration <- nmk( locparams, imageMetric, control = list(trace=0,maxfeval=1500),
+  metricIn=metric,
+  dpcaIn=dpca, fImg=fixedI, mImg=template,
+  parameterRegularization=mypr)
+
+t2=Sys.time()
+bestParams = pcaRegistration$par
+
+ncomp = 3
+scl = 1/ncomp
+for ( i in 1:length( bestParams ) )
+  if ( i == 1 )
+    combvec = dpca$pcaWarps[[i]] * bestParams[i] * scl else 
+      combvec = combvec + dpca$pcaWarps[[i]] * bestParams[i] * scl
+print( paste( "shape prob:",computeShapeProbability(  bestParams, 
+  shapeDistancesNorm, pcaReconCoeffsMeans, pcaReconCoeffsSD  ) ) )
+warpTx = antsrTransformFromDisplacementField( combvec * (1.0) )
+wtxlong = list( ) ; for ( i in 1:ncomp ) wtxlong[[i]]=warpTx
+warped = applyAntsrTransform( wtxlong, data = template,
+  reference = template ) 
+plot( warped, rilist[[k]], window.img=c(-1,1),doCropping=F,alpha=0.5)
+
+
+```
+
+
 Create a random fish.  Draw from a multivariate normal distribution, please.
 
 
 ```{r randspcaresult}
+# only use up to this number of basis functions
+mxk = 5 # length( pcaReconCoeffsMeans )
+
 library( MASS )
 # mvrnorm(n = 1, mu, Sigma, tol = 1e-6, empirical = FALSE, EISPACK = FALSE)
 mysigma = cov( pcaReconCoeffs )
-# set.seed(1110999)
+set.seed(15510999)
 # now make a few "random" fish
-for ( few in 1:3 ) {
-mxk = length( pcaReconCoeffsMeans )
-ncomp = 5
-scl = 1/ncomp
-sdscl = 0.5
-locparams = MASS::mvrnorm( 1, pcaReconCoeffsMeans,  mysigma )
+for ( few in 1:3 ) 
+  {
+sdscl = 2
+locparams = mvtnorm::rmvnorm( 1, pcaReconCoeffsMeans, mysigma * sdscl )
+locparams[ -c(1:mxk) ] = 0
+  # MASS::mvrnorm( 1, 
+#  matrix(pcaReconCoeffsMeans,nrow=1),  mysigma * sdscl, empirical = TRUE)
 for ( i in 1:length( locparams ) )
   if ( i == 1 )
     combvec = dpca$pcaWarps[[i]] * locparams[i] * scl else 
