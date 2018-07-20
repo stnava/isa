@@ -137,8 +137,8 @@ Compute PCA based on the full deformation field.
 mskpca = msk * 0 + 1
 if ( !exists("dpca") )
 ####
-# this option can compute > n components
-dpca = multichannelPCA( wlist, mskpca, k=4, pcaOption=50, verbose=FALSE  ) 
+# this option can compute > n components - leave one guy out for testing
+dpca = multichannelPCA( wlist[-12], mskpca, k=35, pcaOption=50, verbose=FALSE  ) 
 #  dpca = multichannelPCA( wlist, mskpca, pcaOption='svd', verbose=FALSE ) # standard
 #  dpca = multichannelPCA( wlist, mskpca, pcaOption='randPCA', verbose=FALSE ) # big data standard
 # dpca = multichannelPCA( wlist, mskpca, k=20, pcaOption='eanat', verbose=FALSE )
@@ -215,7 +215,7 @@ Reconstruct one of the original fish images from the basis and the template.
 ncomp = 10
 scl = 1/ncomp
 
-k = 16 # which fish
+k = 12 # which fish
 
 locparams = pcaReconCoeffs[ k,  ] * (-1)
 for ( i in 1:length( locparams ) )
@@ -239,72 +239,35 @@ plot( warped, rilist[[k]], window.img=c(-1,1),doCropping=F,alpha=0.5)
 PCA-based image registration.  Ultimately similar to what we would have with a deep learning method.  Ie a basis set that gets reweighted for different images.
 
 ```{r pcaRegistration,eval=TRUE}
-library(optimx)
-k = 13
+# library( neldermead )
+# library( optimization )
+# library( dfoptim ) # derivative free optimization
+# library(RcppDE)
+# library(optimx)
+# library( BB )
+library(nloptr) # fast and general
+k = 12
 locparams = colMeans( pcaReconCoeffs[ , ] )
-mypr = abs( cor( pcaReconCoeffs ) )
-mypr[ mypr < 0.5  ] = 0
-mypr = mypr / 
-  Matrix::rowSums( mypr)
-imageMetricGrad <- function( pcaParams, fImg, mImg, dpcaIn, metricIn, 
-                             parameterRegularization, 
-                             paramScales,
-                             gradStep, whichk ) {
-  ncomp = 3
-  scl = 1/ncomp
-
-  deriv = pcaParams * 0
-  eps = gradStep
-  for ( k in whichk )
-    {
-    pcaParamsA = pcaParamsB = pcaParams
-    pcaParamsA[k] = pcaParamsA[k] - eps * paramScales[k]
-    pcaParamsB[k] = pcaParamsB[k] + eps * paramScales[k]
-    for ( i in 1:length( pcaParams ) )
-      if ( i == 1 )
-        combvec = dpcaIn$pcaWarps[[i]] * pcaParamsA[i] * scl else 
-          combvec = combvec + dpcaIn$pcaWarps[[i]] * pcaParamsA[i] * scl
-    warpTx = antsrTransformFromDisplacementField( combvec )
-    wtxlong = list( ) 
-    for ( i in 1:ncomp ) {
-      wtxlong[[i]] = warpTx
-      }
-    warped = applyAntsrTransform( wtxlong, data = mImg,
-      reference = fImg )
-    antsrMetricSetMovingImage( metricIn, warped )
-    antsrMetricInitialize( metricIn )
-    metricVal = antsrMetricGetValue( metricIn ) 
-    
-    for ( i in 1:length( pcaParams ) )
-      if ( i == 1 )
-        combvec = dpcaIn$pcaWarps[[i]] * pcaParamsB[i] * scl else 
-          combvec = combvec + dpcaIn$pcaWarps[[i]] * pcaParamsB[i] * scl
-    warpTx = antsrTransformFromDisplacementField( combvec )
-    wtxlong = list( ) 
-    for ( i in 1:ncomp ) {
-      wtxlong[[i]] = warpTx
-      }
-    warped = applyAntsrTransform( wtxlong, data = mImg,
-      reference = fImg )
-    antsrMetricSetMovingImage( metricIn, warped )
-    antsrMetricInitialize( metricIn )
-    metricVal2 = antsrMetricGetValue( metricIn ) 
-    deriv[ k ] = eps * ( metricVal2 - metricVal )
-#  print( paste(metricVal2,metricVal))
-    }
-  return(  as.numeric( parameterRegularization %*% deriv  ) )
-}
+mypr = ( cor( pcaReconCoeffs ) )
+mypr[ mypr < 0.9  ] = 0
+mypr = mypr / Matrix::rowSums( mypr)
 
 r16 = antsImageRead( getANTsRData( 'r16' ) )
-fixedI = r16 # try the brain - see how improbable a solution we get
 fixedI = rilist[[k]]
-metric = antsrMetricCreate( fixedI, template, type="MeanSquares")
+# fixedI = r16 # try the brain - see how improbable a solution we get
+metric = antsrMetricCreate( fixedI, template, type = "Corr", 
+  sampling.strategy = "regular", sampling.percentage = 0.1, nBins=8 )
 antsrMetricInitialize( metric )
 
-imageMetric <- function( pcaParams, fImg, mImg, dpcaIn, metricIn, 
-                         parameterRegularization ) {
-#  pcaParams = as.numeric( parameterRegularization %*% pcaParams  )
-  ncomp = 3
+imageMetric <- function( optParams, fImg, mImg, dpcaIn, metricIn, 
+                         parameterRegularization, pcaParams, whichk ) {
+  if ( missing( whichk  )) whichk=1:length(pcaParams)
+  pcaParams[ whichk ] = optParams
+  if ( ! missing( parameterRegularization )) {
+    pcaParams = as.numeric( parameterRegularization %*% pcaParams  )
+    optParams = pcaParams[ whichk ]
+    }
+  ncomp = 8
   scl = 1/ncomp
   for ( i in 1:length( pcaParams ) )
     if ( i == 1 )
@@ -318,43 +281,37 @@ imageMetric <- function( pcaParams, fImg, mImg, dpcaIn, metricIn,
   antsrMetricSetMovingImage( metricIn, warped )
   antsrMetricInitialize( metricIn )
   metricVal = antsrMetricGetValue( metricIn ) 
+  if ( rnorm(1) > 1 ) print( metricVal )
   return( metricVal )
 }
 
-sclParams = pcaReconCoeffsSD / max( pcaReconCoeffsSD )
-for( poo in 1:1) {
-#  drivr = imageMetricGrad( locparams, rilist[[k]], template, dpca, metric,   
-#                 parameterRegularization  = mypr, 
-#                 paramScales = rep(1,length(sclParams)),
-#                 gradStep=1., whichk=1:10 )
-#  locparams = locparams - drivr*1e6
-#  print( imageMetric( locparams, rilist[[k]], template, dpca, metric   ) )
+# bounded optimization
+L = locparams - 3.0 * pcaReconCoeffsSD
+U = locparams + 3.0 * pcaReconCoeffsSD
+bestParams = locparams
+for ( dok in 1:1 ) {
+  whichk = 1:length( locparams )
+# good choices below
+  optfn = neldermead
+  optfn = isres
+  optfn = bobyqa # good as well ...
+  optfn = cobyla # second best?
+  optfn = sbplx  # number one performer?
+  pcaRegistration <- optfn( bestParams[ whichk ], imageMetric, 
+                           lower=L, upper=U, nl.info = T,
+#    control = list( maxeval=50 ),
+    metricIn=metric, whichk = whichk,
+    dpcaIn=dpca, fImg=fixedI, mImg=template,
+#    parameterRegularization=mypr, 
+    pcaParams = bestParams )
+
+  bestParams[ whichk ] = pcaRegistration$par
+  print( paste(dok, "metric", 
+    imageMetric( optParams=bestParams, fImg=fixedI, mImg=template, 
+      dpcaIn=dpca, metricIn = metric, pcaParams = bestParams ) ) )
   }
-
-ctl = list(maxit = 1000, temp = 20, parscale = sclParams )
-ctl = list(maxit = 10, parscale = sclParams )
-t1=Sys.time()
-
-# pcaRegistration = nlm( f=imageMetric, p=locparams, 
-#  metricIn=metric,
-#  dpcaIn=dpca, fImg=rilist[[k]], mImg=template,
-#  parameterRegularization=mypr, fscale = 0, stepmax = 10 )
-# 
-# pcaRegistration = optim( locparams, imageMetric, # gr=imageMetricGrad,
-#  method = "L-BFGS-B", control = ctl, metricIn=metric,
-#  dpcaIn=dpca, fImg=rilist[[k]], mImg=template,
-#  parameterRegularization=mypr )
-library( neldermead )
-library(dfoptim) # derivative free optimization
-pcaRegistration <- nmk( locparams, imageMetric, control = list(trace=0,maxfeval=1500),
-  metricIn=metric,
-  dpcaIn=dpca, fImg=fixedI, mImg=template,
-  parameterRegularization=mypr)
-
 t2=Sys.time()
-bestParams = pcaRegistration$par
-
-ncomp = 3
+ncomp = 8
 scl = 1/ncomp
 for ( i in 1:length( bestParams ) )
   if ( i == 1 )
@@ -365,9 +322,14 @@ print( paste( "shape prob:",computeShapeProbability(  bestParams,
 warpTx = antsrTransformFromDisplacementField( combvec * (1.0) )
 wtxlong = list( ) ; for ( i in 1:ncomp ) wtxlong[[i]]=warpTx
 warped = applyAntsrTransform( wtxlong, data = template,
-  reference = template ) 
-plot( warped, rilist[[k]], window.img=c(-1,1),doCropping=F,alpha=0.5)
-
+  reference = fixedI ) 
+plot( fixedI, warped, window.img=range(fixedI),doCropping=F,alpha=0.5)
+range( createJacobianDeterminantImage( fixedI, combvec ) )
+mywarpedgrid = createWarpedGrid( fixedI, gridDirections=c(T,T),
+                                 gridStep = 10, gridWidth = 2,
+  transform=combvec, fixedReferenceImage=fixedI )
+plot( fixedI, mywarpedgrid, alpha=0.75, color.overlay='blue', doCropping=F )
+plot(createJacobianDeterminantImage( fixedI, combvec ))
 
 ```
 
