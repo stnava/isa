@@ -135,10 +135,11 @@ Compute PCA based on the full deformation field.
 
 ```{r computer}
 mskpca = msk * 0 + 1
+leaveout = 6
 if ( !exists("dpca") )
 ####
 # this option can compute > n components - leave one guy out for testing
-dpca = multichannelPCA( wlist[-12], mskpca, k=35, pcaOption=50, verbose=FALSE  ) 
+dpca = multichannelPCA( wlist[-leaveout], mskpca, k=35, pcaOption=50, verbose=FALSE  ) 
 #  dpca = multichannelPCA( wlist, mskpca, pcaOption='svd', verbose=FALSE ) # standard
 #  dpca = multichannelPCA( wlist, mskpca, pcaOption='randPCA', verbose=FALSE ) # big data standard
 # dpca = multichannelPCA( wlist, mskpca, k=20, pcaOption='eanat', verbose=FALSE )
@@ -215,7 +216,7 @@ Reconstruct one of the original fish images from the basis and the template.
 ncomp = 10
 scl = 1/ncomp
 
-k = 12 # which fish
+k = leaveout # which fish
 
 locparams = pcaReconCoeffs[ k,  ] * (-1)
 for ( i in 1:length( locparams ) )
@@ -246,7 +247,7 @@ PCA-based image registration.  Ultimately similar to what we would have with a d
 # library(optimx)
 # library( BB )
 library(nloptr) # fast and general
-k = 12
+k = leaveout
 locparams = colMeans( pcaReconCoeffs[ , ] )
 mypr = ( cor( pcaReconCoeffs ) )
 mypr[ mypr < 0.9  ] = 0
