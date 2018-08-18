@@ -135,13 +135,13 @@ Compute PCA based on the full deformation field.
 
 ```{r computer}
 mskpca = msk * 0 + 1
-leaveout = 6
+if ( ! exists("leaveout") ) leaveout = 6
 if ( !exists("dpca") )
 ####
 # this option can compute > n components - leave one guy out for testing
-dpca = multichannelPCA( wlist[-leaveout], mskpca, k=35, pcaOption=50, verbose=FALSE  ) 
+  dpca = multichannelPCA( wlist[-leaveout], mskpca, k=30, pcaOption=50, verbose=FALSE  ) 
 #  dpca = multichannelPCA( wlist, mskpca, pcaOption='svd', verbose=FALSE ) # standard
-#  dpca = multichannelPCA( wlist, mskpca, pcaOption='randPCA', verbose=FALSE ) # big data standard
+#  dpca = multichannelPCA( wlist, mskpca, pcaOption='randPCA', k=6, verbose=FALSE ) # big data standard
 # dpca = multichannelPCA( wlist, mskpca, k=20, pcaOption='eanat', verbose=FALSE )
 # dpca = multichannelPCA( wlist, mskpca, k=50, pcaOption=2000, verbose=FALSE, auxiliaryModality = imat )
 # dpca = multichannelPCA( wlist, mskpca, k=8, pcaOption='fastICA', verbose=FALSE )
@@ -213,9 +213,9 @@ Reconstruct one of the original fish images from the basis and the template.
 
 ```{r reconFish}
 
-ncomp = 10
-scl = 1/ncomp
-
+ncomp = 8
+scl = 1.0/ncomp
+vecSmooth = 0.5
 k = leaveout # which fish
 
 locparams = pcaReconCoeffs[ k,  ] * (-1)
@@ -223,6 +223,7 @@ for ( i in 1:length( locparams ) )
   if ( i == 1 )
     combvec = dpca$pcaWarps[[i]] * locparams[i] * scl else 
       combvec = combvec + dpca$pcaWarps[[i]] * locparams[i] * scl
+combvec = smoothImage( combvec, vecSmooth )
 print( paste( "shape prob:",computeShapeProbability(  locparams, 
   shapeDistancesNorm, pcaReconCoeffsMeans, pcaReconCoeffsSD  ) ) )
 # combvec = combvec * 0.25 / max( abs( combvec  ) )
@@ -240,13 +241,14 @@ plot( warped, rilist[[k]], window.img=c(-1,1),doCropping=F,alpha=0.5)
 PCA-based image registration.  Ultimately similar to what we would have with a deep learning method.  Ie a basis set that gets reweighted for different images.
 
 ```{r pcaRegistration,eval=TRUE}
+#
 # library( neldermead )
 # library( optimization )
 # library( dfoptim ) # derivative free optimization
 # library(RcppDE)
 # library(optimx)
 # library( BB )
-library(nloptr) # fast and general
+library( nloptr ) # fast and general
 k = leaveout
 locparams = colMeans( pcaReconCoeffs[ , ] )
 mypr = ( cor( pcaReconCoeffs ) )
@@ -268,12 +270,11 @@ imageMetric <- function( optParams, fImg, mImg, dpcaIn, metricIn,
     pcaParams = as.numeric( parameterRegularization %*% pcaParams  )
     optParams = pcaParams[ whichk ]
     }
-  ncomp = 8
-  scl = 1/ncomp
   for ( i in 1:length( pcaParams ) )
     if ( i == 1 )
       combvec = dpcaIn$pcaWarps[[i]] * pcaParams[i] * scl else 
         combvec = combvec + dpcaIn$pcaWarps[[i]] * pcaParams[i] * scl
+  combvec = smoothImage( combvec, vecSmooth )
   warpTx = antsrTransformFromDisplacementField( combvec )
   wtxlong = list( ) 
   for ( i in 1:ncomp ) wtxlong[[i]] = warpTx
@@ -282,15 +283,36 @@ imageMetric <- function( optParams, fImg, mImg, dpcaIn, metricIn,
   antsrMetricSetMovingImage( metricIn, warped )
   antsrMetricInitialize( metricIn )
   metricVal = antsrMetricGetValue( metricIn ) 
-  if ( rnorm(1) > 1 ) print( metricVal )
+#  if ( rnorm(1) > 1 ) print( metricVal )
   return( metricVal )
 }
 
+
+imageMetricLS <- function( u, pcaParamsIn, gradIn, fImg, mImg, dpcaIn, metricIn ) {
+  pcaParams = pcaParamsIn + gradIn * u
+  for ( i in 1:length( pcaParams ) )
+    if ( i == 1 )
+      combvec = dpcaIn$pcaWarps[[i]] * pcaParams[i] * scl else 
+        combvec = combvec + dpcaIn$pcaWarps[[i]] * pcaParams[i] * scl
+  combvec = smoothImage( combvec, vecSmooth )
+  warpTx = antsrTransformFromDisplacementField( combvec )
+  wtxlong = list( ) 
+  for ( i in 1:ncomp ) wtxlong[[i]] = warpTx
+  warped = applyAntsrTransform( wtxlong, data = mImg,
+    reference = fImg )
+  antsrMetricSetMovingImage( metricIn, warped )
+  antsrMetricInitialize( metricIn )
+  metricVal = antsrMetricGetValue( metricIn ) 
+#  if ( rnorm(1) > 1 ) print( metricVal )
+  return( metricVal )
+}
+
+
 # bounded optimization
-L = locparams - 3.0 * pcaReconCoeffsSD
-U = locparams + 3.0 * pcaReconCoeffsSD
+L = ncomp *  ( locparams - 3.0 * pcaReconCoeffsSD )
+U = ncomp *  ( locparams + 3.0 * pcaReconCoeffsSD )
 bestParams = locparams
-for ( dok in 1:1 ) {
+for ( dok in 1:50 ) {
   whichk = 1:length( locparams )
 # good choices below
   optfn = neldermead
@@ -298,26 +320,43 @@ for ( dok in 1:1 ) {
   optfn = bobyqa # good as well ...
   optfn = cobyla # second best?
   optfn = sbplx  # number one performer?
+  if ( FALSE ) {
   pcaRegistration <- optfn( bestParams[ whichk ], imageMetric, 
                            lower=L, upper=U, nl.info = T,
-#    control = list( maxeval=50 ),
+    control = list( maxeval=5000 ),
     metricIn=metric, whichk = whichk,
     dpcaIn=dpca, fImg=fixedI, mImg=template,
 #    parameterRegularization=mypr, 
     pcaParams = bestParams )
-
-  bestParams[ whichk ] = pcaRegistration$par
+    bestParams[ whichk ] = pcaRegistration$par
+  }
+  
+  # gradient wrt best current parameters
+  myg4 = numDeriv::grad( imageMetric, bestParams, method="Richardson",  
+    method.args=list(eps=0.01*pcaReconCoeffsSD),
+    metricIn=metric, whichk = whichk,
+    dpcaIn=dpca, fImg=fixedI, mImg=template,
+    pcaParams = bestParams )
+    
+  # find the best step
+  bestval = optimize( imageMetricLS, lower=-1e6, upper=1e6,
+    metricIn=metric,
+    pcaParamsIn = bestParams, gradIn = myg4,
+    dpcaIn=dpca, fImg=fixedI, mImg=template )
+  
+  # update parameters
+  bestParams = bestParams + myg4 * bestval$minimum
+  
   print( paste(dok, "metric", 
     imageMetric( optParams=bestParams, fImg=fixedI, mImg=template, 
       dpcaIn=dpca, metricIn = metric, pcaParams = bestParams ) ) )
   }
 t2=Sys.time()
-ncomp = 8
-scl = 1/ncomp
 for ( i in 1:length( bestParams ) )
   if ( i == 1 )
     combvec = dpca$pcaWarps[[i]] * bestParams[i] * scl else 
       combvec = combvec + dpca$pcaWarps[[i]] * bestParams[i] * scl
+combvec = smoothImage( combvec, vecSmooth )
 print( paste( "shape prob:",computeShapeProbability(  bestParams, 
   shapeDistancesNorm, pcaReconCoeffsMeans, pcaReconCoeffsSD  ) ) )
 warpTx = antsrTransformFromDisplacementField( combvec * (1.0) )
@@ -327,8 +366,7 @@ warped = applyAntsrTransform( wtxlong, data = template,
 plot( fixedI, warped, window.img=range(fixedI),doCropping=F,alpha=0.5)
 range( createJacobianDeterminantImage( fixedI, combvec ) )
 mywarpedgrid = createWarpedGrid( fixedI, gridDirections=c(T,T),
-                                 gridStep = 10, gridWidth = 2,
-  transform=combvec, fixedReferenceImage=fixedI )
+  gridStep = 10, gridWidth = 2, transform=combvec, fixedReferenceImage=fixedI )
 plot( fixedI, mywarpedgrid, alpha=0.75, color.overlay='blue', doCropping=F )
 plot(createJacobianDeterminantImage( fixedI, combvec ))
 
