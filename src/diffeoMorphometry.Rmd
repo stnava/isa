@@ -139,8 +139,8 @@ if ( ! exists("leaveout") ) leaveout = 6
 if ( !exists("dpca") )
 ####
 # this option can compute > n components - leave one guy out for testing
-  dpca = multichannelPCA( wlist[-leaveout], mskpca, k=30, pcaOption=50, verbose=FALSE  ) 
-#  dpca = multichannelPCA( wlist, mskpca, pcaOption='svd', verbose=FALSE ) # standard
+#  dpca = multichannelPCA( wlist[-leaveout], mskpca, k=50, pcaOption=25, verbose=FALSE  ) 
+  dpca = multichannelPCA( wlist, mskpca, pcaOption='svd', verbose=FALSE ) # standard
 #  dpca = multichannelPCA( wlist, mskpca, pcaOption='randPCA', k=6, verbose=FALSE ) # big data standard
 # dpca = multichannelPCA( wlist, mskpca, k=20, pcaOption='eanat', verbose=FALSE )
 # dpca = multichannelPCA( wlist, mskpca, k=50, pcaOption=2000, verbose=FALSE, auxiliaryModality = imat )
@@ -163,7 +163,7 @@ for ( ww in 1:mxk )
     reference = template )
   edges = warped - iMath(warped,"ME",3)
   plot( template, edges, window.overlay = c(0.1,1), alpha=0.75, doCropping=F, 
-        color.overlay='red' )
+        color.overlay='magma' )
   }
 ```
 
@@ -249,6 +249,8 @@ PCA-based image registration.  Ultimately similar to what we would have with a d
 # library(optimx)
 # library( BB )
 library( nloptr ) # fast and general
+metricx = "Corr"
+metricx = "Mattes"
 k = leaveout
 locparams = colMeans( pcaReconCoeffs[ , ] )
 mypr = ( cor( pcaReconCoeffs ) )
@@ -258,7 +260,7 @@ mypr = mypr / Matrix::rowSums( mypr)
 r16 = antsImageRead( getANTsRData( 'r16' ) )
 fixedI = rilist[[k]]
 # fixedI = r16 # try the brain - see how improbable a solution we get
-metric = antsrMetricCreate( fixedI, template, type = "Corr", 
+metric = antsrMetricCreate( fixedI, template, type = metricx, 
   sampling.strategy = "regular", sampling.percentage = 0.1, nBins=8 )
 antsrMetricInitialize( metric )
 
@@ -312,7 +314,7 @@ imageMetricLS <- function( u, pcaParamsIn, gradIn, fImg, mImg, dpcaIn, metricIn 
 L = ncomp *  ( locparams - 3.0 * pcaReconCoeffsSD )
 U = ncomp *  ( locparams + 3.0 * pcaReconCoeffsSD )
 bestParams = locparams
-for ( dok in 1:50 ) {
+for ( dok in 1:15 ) {
   whichk = 1:length( locparams )
 # good choices below
   optfn = neldermead
@@ -367,7 +369,7 @@ plot( fixedI, warped, window.img=range(fixedI),doCropping=F,alpha=0.5)
 range( createJacobianDeterminantImage( fixedI, combvec ) )
 mywarpedgrid = createWarpedGrid( fixedI, gridDirections=c(T,T),
   gridStep = 10, gridWidth = 2, transform=combvec, fixedReferenceImage=fixedI )
-plot( fixedI, mywarpedgrid, alpha=0.75, color.overlay='blue', doCropping=F )
+plot( fixedI, mywarpedgrid, alpha=0.75, color.overlay='viridis', doCropping=F )
 plot(createJacobianDeterminantImage( fixedI, combvec ))
 
 ```
@@ -527,7 +529,7 @@ Alternative PCA image "expansion" at superior and inferior regions and
 ```{r allometryjv2}
 vimg = abs( pcaimg )
 plot( msk, list( pcaimg, pcaimg*(-1) ), window.overlay=c(1, max(vimg) ), 
-      color.overlay=c('red','blue'), doCropping=F )
+      color.overlay=c('magma','viridis'), doCropping=F )
 ```
 
 
